@@ -65,6 +65,7 @@
 #include <pam.hxx>
 #include <ndtxt.hxx>
 #include <txtfrm.hxx>
+#include <rootfrm.hxx>
 #include <rolbck.hxx>
 #include <ddefld.hxx>
 #include <docufld.hxx>
@@ -2050,16 +2051,49 @@ static void lcl_MergeListLevelIndentAsLRSpaceItem( const SwTextNode& rTextNode,
 // request the attributes of the TextNode at the range
 bool SwTextNode::GetParaAttr(SfxItemSet& rSet, sal_Int32 nStt, sal_Int32 nEnd,
                          const bool bOnlyTextAttr, const bool bGetFromChrFormat,
-                         const bool bMergeIndentValuesOfNumRule ) const
+                         const bool bMergeIndentValuesOfNumRule,
+                         SwRootFrame const*const pLayout) const
 {
     assert(!rSet.Count()); // handled inconsistently, typically an error?
+
+    if (pLayout && pLayout->IsHideRedlines())
+    {
+        if (GetRedlineMergeFlag() == SwNode::Merge::Hidden)
+        {
+            return false; // ignore deleted node
+        }
+    }
 
     // get the node's automatic attributes
     SfxItemSet aFormatSet( *rSet.GetPool(), rSet.GetRanges() );
     if (!bOnlyTextAttr)
     {
         SwContentNode::GetAttr( aFormatSet );
-        if ( bMergeIndentValuesOfNumRule )
+        bool isParaPropsNode(true);
+        if (pLayout && pLayout->IsHideRedlines())
+        {
+            if (sw::MergedPara const*const pMerged = static_cast<SwTextFrame*>(getLayoutFrame(pLayout))->GetMergedPara())
+            {
+                if (pMerged->pFirstNode != this)
+                {
+                    aFormatSet.ClearItem(RES_BREAK);
+                    aFormatSet.ClearItem(RES_PAGEDESC);
+                }
+                if (pMerged->pParaPropsNode != this)
+                {
+                    isParaPropsNode = false;
+                    for (sal_uInt16 i = RES_PARATR_BEGIN; i != RES_FRMATR_END; ++i)
+                    {
+                        if (i != RES_BREAK && i != RES_PAGEDESC)
+                        {
+                            aFormatSet.ClearItem(i);
+                        }
+                    }
+                }
+                // keep all the CHRATR anyway...
+            }
+        }
+        if (bMergeIndentValuesOfNumRule && isParaPropsNode)
         {
             lcl_MergeListLevelIndentAsLRSpaceItem( *this, aFormatSet );
         }
