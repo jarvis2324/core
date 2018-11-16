@@ -60,6 +60,46 @@ static sal_uInt16 getMaxLookup()
     return 1000;
 }
 
+static void
+MergeItem(SfxItemSet & rSet, SfxItemSet const& rTempSet, sal_uInt16 const nWhich)
+{
+    SfxPoolItem const*const pItem(rTempSet.GetItem(nWhich, false));
+    if (!pItem || IsInvalidItem(pItem))
+    {
+        rSet.InvalidateItem(nWhich);
+    }
+    else
+    {
+        rSet.MergeValue(*pItem, false);
+    }
+}
+
+static void MergeSet(sw::MergedPara const& rMerged, SwTextNode const& rNode,
+        SfxItemSet & rSet, SfxItemSet const& rTempSet)
+{
+    for (sal_uInt16 const* pWhich = rSet.GetRanges(); *pWhich; ++pWhich)
+    {
+        if (*pWhich < RES_PARATR_BEGIN || RES_FRMATR_END < *pWhich)
+        {
+            MergeItem(rSet, rTempSet, *pWhich);
+        }
+        else if (*pWhich == RES_BREAK || *pWhich == RES_PAGEDESC)
+        {
+            if (rMerged.pFirstNode == &rNode)
+            {
+                MergeItem(rSet, rTempSet, *pWhich);
+            }
+        }
+        else
+        {
+            if (rMerged.pParaPropsNode == &rNode)
+            {
+                MergeItem(rSet, rTempSet, *pWhich);
+            }
+        }
+    }
+}
+
 bool SwEditShell::GetPaMAttr( SwPaM* pPaM, SfxItemSet& rSet,
                               const bool bMergeIndentValuesOfNumRule ) const
 {
@@ -132,6 +172,7 @@ bool SwEditShell::GetPaMAttr( SwPaM* pPaM, SfxItemSet& rSet,
         for( sal_uLong n = nSttNd; n <= nEndNd; ++n )
         {
             SwNode* pNd = GetDoc()->GetNodes()[ n ];
+            sw::MergedPara const* pMerged(nullptr);
             switch( pNd->GetNodeType() )
             {
             case SwNodeType::Text:
@@ -145,6 +186,12 @@ bool SwEditShell::GetPaMAttr( SwPaM* pPaM, SfxItemSet& rSet,
                                                 false, true,
                                                 bMergeIndentValuesOfNumRule,
                                                 GetLayout());
+
+                    SwTextFrame const*const pFrame(GetLayout()->IsHideRedlines() ? static_cast<SwTextFrame const*>(pNd->GetTextNode()->getLayoutFrame(GetLayout())) : nullptr);
+                    if (pFrame)
+                    {
+                        pMerged = pFrame->GetMergedPara();
+                    }
                 }
                 break;
             case SwNodeType::Grf:
@@ -159,7 +206,19 @@ bool SwEditShell::GetPaMAttr( SwPaM* pPaM, SfxItemSet& rSet,
             if( pNd )
             {
                 if( pSet != &rSet )
-                    rSet.MergeValues( aSet );
+                {
+                    if (pMerged)
+                    {
+                        if (pNd->GetRedlineMergeFlag() != SwNode::Merge::Hidden)
+                        {
+                            MergeSet(*pMerged, *pNd->GetTextNode(), rSet, aSet);
+                        }
+                    }
+                    else
+                    {
+                        rSet.MergeValues( aSet );
+                    }
+                }
 
                 if( aSet.Count() )
                     aSet.ClearItem();
